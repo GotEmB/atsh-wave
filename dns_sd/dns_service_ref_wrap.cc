@@ -34,14 +34,17 @@ void DNSServiceRefWrap::New(const FunctionCallbackInfo<Value> &args) {
 		DNSServiceRef *ref = (DNSServiceRef *)malloc(sizeof(DNSServiceRef));
 		memset(ref, 0, sizeof(DNSServiceRef));
 		String::Utf8Value regType(args[0]->ToString());
-		DNSServiceRegister(ref, 0, 0, NULL, "_atsh-wave._tcp", NULL, NULL, 7080, 0, NULL, NULL, NULL);
+		DNSServiceRegister(ref, 0, 0, NULL, *regType, NULL, NULL, args[1]->Int32Value(), 0, NULL, NULL, NULL);
 		DNSServiceRefWrap* obj = new DNSServiceRefWrap(ref);
+		args.This()->Set(String::NewSymbol("service"), args[0]->ToString(), ReadOnly);
+		args.This()->Set(String::NewSymbol("port"), Number::New(args[1]->Int32Value()), ReadOnly);
+		args.This()->Set(String::NewSymbol("advertising"), True(isolate), ReadOnly);
 		obj->Wrap(args.This());
 		args.GetReturnValue().Set(args.This());
 	} else {
 		// Invoked as plain function `DNSServiceRefWrap(...)`, turn into construct call.
-		const int argc = 1;
-		Local<Value> argv[argc] = { args[0] };
+		const int argc = 2;
+		Local<Value> argv[argc] = { args[0], args[1] };
 		Local<Function> cons = Local<Function>::New(isolate, constructor);
 		args.GetReturnValue().Set(cons->NewInstance(argc, argv));
 	}
@@ -51,8 +54,8 @@ void DNSServiceRefWrap::NewInstance(const FunctionCallbackInfo<Value> &args) {
 	Isolate* isolate = Isolate::GetCurrent();
 	HandleScope scope(isolate);
 
-	const int argc = 1;
-	Local<Value> argv[argc] = { args[0] };
+	const int argc = 2;
+	Local<Value> argv[argc] = { args[0], args[1] };
 	Local<Function> cons = Local<Function>::New(isolate, constructor);
 	args.GetReturnValue().Set(cons->NewInstance(argc, argv));
 }
@@ -66,9 +69,9 @@ void DNSServiceRefWrap::Terminate(const v8::FunctionCallbackInfo<v8::Value> &arg
 		DNSServiceRefDeallocate(*obj->ref);
 		free(obj->ref);
 		obj->ref = NULL;
-		args.GetReturnValue().Set(True(isolate));
+		args.Holder()->ForceSet(String::NewSymbol("advertising"), False(isolate), ReadOnly);
+		args.GetReturnValue().Set(args.Holder());
 	} else {
 		ThrowException(Exception::ReferenceError(v8::String::NewFromUtf8(isolate, "Service already terminated.")));
-		args.GetReturnValue().Set(False(isolate));
 	}
 }
