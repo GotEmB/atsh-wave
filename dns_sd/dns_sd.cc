@@ -6,26 +6,24 @@
 using namespace v8;
 using namespace node;
 
-void Method(const FunctionCallbackInfo<Value> &args) {
+void NewAdvertisement(const FunctionCallbackInfo<Value> &args) {
 	Isolate* isolate = Isolate::GetCurrent();
 	HandleScope scope(isolate);
-	args.GetReturnValue().Set(String::NewFromUtf8(isolate, "world"));
+
+	DNSServiceRefWrap::NewAdvertisement(args);
 }
 
-void RegisterService(const FunctionCallbackInfo<Value> &args) {
+void NewBrowser(const FunctionCallbackInfo<Value> &args) {
 	Isolate* isolate = Isolate::GetCurrent();
 	HandleScope scope(isolate);
-
-	DNSServiceRefWrap::NewInstance(args);
-
-	//refWrap->returnWrap(args);
-	//args.GetReturnValue().Set(NanObjectWrapHandle(refWrap));
+	
+	DNSServiceRefWrap::NewBrowser(args);
 }
 
 void init(Handle<Object> exports) {
 	DNSServiceRefWrap::Init();
-	NODE_SET_METHOD(exports, "hello", Method);
-	NODE_SET_METHOD(exports, "registerService", RegisterService);
+	NODE_SET_METHOD(exports, "DNSServiceAdvertisement", NewAdvertisement);
+	NODE_SET_METHOD(exports, "DNSServiceBrowser", NewBrowser);
 }
 
 NODE_MODULE(dns_sd, init)

@@ -3,64 +3,99 @@
 #include <node.h>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include "dns_service_ref_wrap.h"
 
 using namespace v8;
+using namespace node;
 
-Persistent<Function> DNSServiceRefWrap::constructor;
+std::map<DNSServiceRef *, Local<Object> > refMap;
 
-DNSServiceRefWrap::DNSServiceRefWrap(DNSServiceRef *ref) : ref(ref) {
-}
+Persistent<Function> DNSServiceRefWrap::AdvertisementConstructor;
+Persistent<Function> DNSServiceRefWrap::BrowserConstructor;
+
+DNSServiceRefWrap::DNSServiceRefWrap(DNSServiceRef *ref, DNSServiceRefWrapType type) : ref(ref), type(type) { }
 
 void DNSServiceRefWrap::Init() {
 	Isolate* isolate = Isolate::GetCurrent();
-	// Prepare constructor template
-	Local<FunctionTemplate> tpl = FunctionTemplate::New(New);
-	tpl->SetClassName(String::NewFromUtf8(isolate, "DNSService"));
-	tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
-	// Prototype
-	NODE_SET_PROTOTYPE_METHOD(tpl, "terminate", Terminate);
+	Local<FunctionTemplate> advertisementTemplate = FunctionTemplate::New(NewAdvertisement);
+	Local<FunctionTemplate> browserTemplate = FunctionTemplate::New(NewBrowser);
+	
+	advertisementTemplate->SetClassName(String::NewFromUtf8(isolate, "DNSServiceAdvertisement"));
+	advertisementTemplate->InstanceTemplate()->SetInternalFieldCount(1);
+	browserTemplate->SetClassName(String::NewFromUtf8(isolate, "DNSServiceBrowser"));
+	browserTemplate->InstanceTemplate()->SetInternalFieldCount(1);
 
-	constructor.Reset(isolate, tpl->GetFunction());
+	NODE_SET_PROTOTYPE_METHOD(advertisementTemplate, "terminate", Terminate);
+	NODE_SET_PROTOTYPE_METHOD(browserTemplate, "terminate", Terminate);
+
+	AdvertisementConstructor.Reset(isolate, advertisementTemplate->GetFunction());
+	BrowserConstructor.Reset(isolate, browserTemplate->GetFunction());
 }
 
-void DNSServiceRefWrap::New(const FunctionCallbackInfo<Value> &args) {
+void DNSServiceRefWrap::NewAdvertisement(const FunctionCallbackInfo<Value> &args) {
 	Isolate* isolate = Isolate::GetCurrent();
 	HandleScope scope(isolate);
 
 	if (args.IsConstructCall()) {
-		// Invoked as constructor: `new DNSServiceRefWrap(...)`
 		DNSServiceRef *ref = (DNSServiceRef *)malloc(sizeof(DNSServiceRef));
 		memset(ref, 0, sizeof(DNSServiceRef));
 		String::Utf8Value regType(args[0]->ToString());
 		DNSServiceRegister(ref, 0, 0, NULL, *regType, NULL, NULL, args[1]->Int32Value(), 0, NULL, NULL, NULL);
-		DNSServiceRefWrap* obj = new DNSServiceRefWrap(ref);
+
+		DNSServiceRefWrap* obj = new DNSServiceRefWrap(ref, DNSServiceAdvertisement);
+		obj->Wrap(args.This());
+		refMap[ref] = Local<Object>::New(isolate, args.This());
+
 		args.This()->Set(String::NewSymbol("service"), args[0]->ToString(), ReadOnly);
 		args.This()->Set(String::NewSymbol("port"), Number::New(args[1]->Int32Value()), ReadOnly);
 		args.This()->Set(String::NewSymbol("advertising"), True(isolate), ReadOnly);
-		obj->Wrap(args.This());
 		args.GetReturnValue().Set(args.This());
 	} else {
-		// Invoked as plain function `DNSServiceRefWrap(...)`, turn into construct call.
 		const int argc = 2;
 		Local<Value> argv[argc] = { args[0], args[1] };
-		Local<Function> cons = Local<Function>::New(isolate, constructor);
+		Local<Function> cons = Local<Function>::New(isolate, AdvertisementConstructor);
 		args.GetReturnValue().Set(cons->NewInstance(argc, argv));
 	}
 }
 
-void DNSServiceRefWrap::NewInstance(const FunctionCallbackInfo<Value> &args) {
+void DNSServiceRefWrap::NewBrowser(const FunctionCallbackInfo<Value> &args) {
 	Isolate* isolate = Isolate::GetCurrent();
 	HandleScope scope(isolate);
 
-	const int argc = 2;
-	Local<Value> argv[argc] = { args[0], args[1] };
-	Local<Function> cons = Local<Function>::New(isolate, constructor);
-	args.GetReturnValue().Set(cons->NewInstance(argc, argv));
+	if (args.IsConstructCall()) {
+		DNSServiceRef *ref = (DNSServiceRef *)malloc(sizeof(DNSServiceRef));
+		memset(ref, 0, sizeof(DNSServiceRef));
+		String::Utf8Value regType(args[0]->ToString());
+		if (DNSServiceBrowse(ref, 0, 0, *regType, NULL, &DNSServiceRefWrap::DNSServiceBrowseReply, NULL) != kDNSServiceErr_NoError)
+			ThrowException(String::NewFromUtf8(isolate, "Failed starting browser"));
+
+		DNSServiceRefWrap* obj = new DNSServiceRefWrap(ref, DNSServiceBrowser);
+		obj->Wrap(args.This());
+		refMap[ref] = Local<Object>::New(isolate, args.This());
+
+		args.This()->Set(String::NewSymbol("service"), args[0]->ToString(), ReadOnly);
+		args.This()->Set(String::NewSymbol("listening"), True(isolate), ReadOnly);
+		args.GetReturnValue().Set(args.This());
+	} else {
+		const int argc = 1;
+		Local<Value> argv[argc] = { args[0] };
+		Local<Function> cons = Local<Function>::New(isolate, BrowserConstructor);
+		args.GetReturnValue().Set(cons->NewInstance(argc, argv));
+	}
 }
 
-void DNSServiceRefWrap::Terminate(const v8::FunctionCallbackInfo<v8::Value> &args) {
+void DNSServiceRefWrap::DNSServiceBrowseReply(DNSServiceRef sdRef, DNSServiceFlags flags, uint32_t interfaceIndex, DNSServiceErrorType errorCode, const char *serviceName, const char *regtype, const char *replyDomain, void *context) {
+	Isolate* isolate = Isolate::GetCurrent();
+	HandleScope scope(isolate);
+	ThrowException(String::NewFromUtf8(isolate, "Got something"));
+
+	Local<Value> argv[1] = { True(isolate) };
+	MakeCallback(refMap[&sdRef], "emit", 1, argv);
+}
+
+void DNSServiceRefWrap::Terminate(const FunctionCallbackInfo<Value> &args) {
 	Isolate* isolate = Isolate::GetCurrent();
 	HandleScope scope(isolate);
 
@@ -69,9 +104,17 @@ void DNSServiceRefWrap::Terminate(const v8::FunctionCallbackInfo<v8::Value> &arg
 		DNSServiceRefDeallocate(*obj->ref);
 		free(obj->ref);
 		obj->ref = NULL;
-		args.Holder()->ForceSet(String::NewSymbol("advertising"), False(isolate), ReadOnly);
+
+		if (obj->type == DNSServiceAdvertisement)
+			args.Holder()->ForceSet(String::NewSymbol("advertising"), False(isolate), ReadOnly);
+		else if (obj->type == DNSServiceBrowser)
+			args.Holder()->ForceSet(String::NewSymbol("listening"), False(isolate), ReadOnly);
 		args.GetReturnValue().Set(args.Holder());
 	} else {
-		ThrowException(Exception::ReferenceError(v8::String::NewFromUtf8(isolate, "Service already terminated.")));
+		if (obj->type == DNSServiceAdvertisement)
+			ThrowException(Exception::ReferenceError(String::NewFromUtf8(isolate, "Advertisement already terminated")));
+		else if (obj->type == DNSServiceBrowser)
+			ThrowException(Exception::ReferenceError(String::NewFromUtf8(isolate, "Browser already terminated")));
 	}
 }
+
