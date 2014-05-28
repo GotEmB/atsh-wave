@@ -1,0 +1,11 @@
+{
+  "name": "atsh-wave",
+  "version": "0.0.1",
+  "main": "shim.js",
+  "dependencies": {
+    "MD5": "~1.2.1",
+    "coffee-script": "~1.7.1",
+    "less": "~1.7.0",
+    "nan": "~1.1.0"
+  }
+}
