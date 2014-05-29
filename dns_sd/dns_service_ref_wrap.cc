@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <thread>
 #include "dns_service_ref_wrap.h"
 
 using namespace v8;
@@ -68,15 +69,33 @@ void DNSServiceRefWrap::NewBrowser(const FunctionCallbackInfo<Value> &args) {
 		DNSServiceRef *ref = (DNSServiceRef *)malloc(sizeof(DNSServiceRef));
 		memset(ref, 0, sizeof(DNSServiceRef));
 		String::Utf8Value regType(args[0]->ToString());
-		if (DNSServiceBrowse(ref, 0, 0, *regType, NULL, &DNSServiceRefWrap::DNSServiceBrowseReply, NULL) != kDNSServiceErr_NoError)
-			ThrowException(String::NewFromUtf8(isolate, "Failed starting browser"));
+		DNSServiceBrowse(ref, 0, 0, *regType, NULL, &DNSServiceRefWrap::DNSServiceBrowseReply, NULL);
 
 		DNSServiceRefWrap* obj = new DNSServiceRefWrap(ref, DNSServiceBrowser);
 		obj->Wrap(args.This());
 		refMap[ref] = Local<Object>::New(isolate, args.This());
 
+		/*
+		std::thread fdLoop([](DNSServiceRefWrap *obj){
+			int dns_fd = DNSServiceRefSockFD(*obj->ref);
+			fd_set readfds;
+			while(obj->ref) {
+				FD_ZERO(&readfds);
+				FD_SET(dns_fd, &readfds);
+				if (select(dns_fd + 1, &readfds, NULL, NULL, NULL) > 0) {
+					obj->refLock.lock();
+					if (obj->ref)
+						DNSServiceProcessResult(*obj->ref);
+					obj->refLock.unlock();
+				}
+			}
+		}, obj);
+		*/
+
 		args.This()->Set(String::NewSymbol("service"), args[0]->ToString(), ReadOnly);
 		args.This()->Set(String::NewSymbol("listening"), True(isolate), ReadOnly);
+		//args.This()->Set(String::NewSymbol("fd"), Integer::New(DNSServiceRefSockFD(*obj->ref)), ReadOnly);
+		NODE_SET_METHOD(args.This(), "getSocketFd", DNSServiceRefWrap::DNSServiceRefGetSockFD);
 		args.GetReturnValue().Set(args.This());
 	} else {
 		const int argc = 1;
@@ -95,15 +114,22 @@ void DNSServiceRefWrap::DNSServiceBrowseReply(DNSServiceRef sdRef, DNSServiceFla
 	MakeCallback(refMap[&sdRef], "emit", 1, argv);
 }
 
+void DNSServiceRefWrap::DNSServiceRefGetSockFD(const FunctionCallbackInfo<Value> &args) {
+	DNSServiceRefWrap* obj = ObjectWrap::Unwrap<DNSServiceRefWrap>(args.Holder());
+	args.GetReturnValue().Set(Integer::New(DNSServiceRefSockFD(*obj->ref)));
+}
+
 void DNSServiceRefWrap::Terminate(const FunctionCallbackInfo<Value> &args) {
 	Isolate* isolate = Isolate::GetCurrent();
 	HandleScope scope(isolate);
 
 	DNSServiceRefWrap* obj = ObjectWrap::Unwrap<DNSServiceRefWrap>(args.Holder());
 	if (obj->ref) {
+		obj->refLock.lock();
 		DNSServiceRefDeallocate(*obj->ref);
 		free(obj->ref);
 		obj->ref = NULL;
+		obj->refLock.unlock();
 
 		if (obj->type == DNSServiceAdvertisement)
 			args.Holder()->ForceSet(String::NewSymbol("advertising"), False(isolate), ReadOnly);

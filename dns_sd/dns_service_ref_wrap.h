@@ -6,6 +6,7 @@
 #include <node.h>
 #include <node_object_wrap.h>
 #include <dns_sd.h>
+#include <mutex>
 
 using namespace v8;
 
@@ -18,8 +19,9 @@ public:
 	static void NewBrowser(const FunctionCallbackInfo<Value> &args);
 
 private:
-	DNSServiceRef *ref;
+	DNSServiceRef * volatile ref;
 	DNSServiceRefWrapType type;
+	std::mutex refLock;
 
 	explicit DNSServiceRefWrap(DNSServiceRef *ref, DNSServiceRefWrapType type);
 
@@ -27,6 +29,7 @@ private:
 	static Persistent<Function> AdvertisementConstructor;
 	static Persistent<Function> BrowserConstructor;
 	static void DNSServiceBrowseReply(DNSServiceRef sdRef, DNSServiceFlags flags, uint32_t interfaceIndex, DNSServiceErrorType errorCode, const char *serviceName, const char *regtype, const char *replyDomain, void *context);
+	static void DNSServiceRefGetSockFD(const FunctionCallbackInfo<Value> &args);
 };
 
 #endif
