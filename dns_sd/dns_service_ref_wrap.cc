@@ -94,8 +94,9 @@ void DNSServiceRefWrap::NewBrowser(const FunctionCallbackInfo<Value> &args) {
 
 		args.This()->Set(String::NewSymbol("service"), args[0]->ToString(), ReadOnly);
 		args.This()->Set(String::NewSymbol("listening"), True(isolate), ReadOnly);
-		//args.This()->Set(String::NewSymbol("fd"), Integer::New(DNSServiceRefSockFD(*obj->ref)), ReadOnly);
-		NODE_SET_METHOD(args.This(), "getSocketFd", DNSServiceRefWrap::DNSServiceRefGetSockFD);
+		args.This()->Set(String::NewSymbol("sockFd"), Integer::New(DNSServiceRefSockFD(*obj->ref)), ReadOnly);
+		NODE_SET_METHOD(args.This(), "processResult", DNSServiceRefWrap::DNSServiceDoProcessResult);
+		NODE_SET_METHOD(args.This(), "removeInits", DNSServiceRefWrap::RemoveBrowserInits);
 		args.GetReturnValue().Set(args.This());
 	} else {
 		const int argc = 1;
@@ -114,9 +115,28 @@ void DNSServiceRefWrap::DNSServiceBrowseReply(DNSServiceRef sdRef, DNSServiceFla
 	MakeCallback(refMap[&sdRef], "emit", 1, argv);
 }
 
-void DNSServiceRefWrap::DNSServiceRefGetSockFD(const FunctionCallbackInfo<Value> &args) {
+void DNSServiceRefWrap::DNSServiceDoProcessResult(const FunctionCallbackInfo<Value> &args) {
+	Isolate* isolate = Isolate::GetCurrent();
 	DNSServiceRefWrap* obj = ObjectWrap::Unwrap<DNSServiceRefWrap>(args.Holder());
-	args.GetReturnValue().Set(Integer::New(DNSServiceRefSockFD(*obj->ref)));
+	if (obj->ref) {
+		DNSServiceProcessResult(*obj->ref);
+		args.GetReturnValue().Set(args.Holder());
+	} else {
+		ThrowException(Exception::ReferenceError(String::NewFromUtf8(isolate, "Invoked processResult on terminated browser")));
+	}
+}
+
+void DNSServiceRefWrap::RemoveBrowserInits(const FunctionCallbackInfo<Value> &args) {
+	Isolate* isolate = Isolate::GetCurrent();
+	Local<Object> This = args.Holder();
+	if (This->Has(String::NewSymbol("removeInits"))) {
+		This->ForceDelete(String::NewSymbol("sockFd"));
+		This->ForceDelete(String::NewSymbol("processResult"));
+		This->ForceDelete(String::NewSymbol("removeInits"));
+		args.GetReturnValue().Set(args.Holder());
+	} else {
+		ThrowException(Exception::ReferenceError(String::NewFromUtf8(isolate, "Inits already removed")));
+	}
 }
 
 void DNSServiceRefWrap::Terminate(const FunctionCallbackInfo<Value> &args) {
